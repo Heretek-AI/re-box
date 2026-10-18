@@ -451,7 +451,7 @@ post-build but never reached — see blocker).
   `/tmp/reverse-engineering-assistant` via `$SRC_DIR` (matches upstream
   release-zip layout); comment in `install-reva.sh` records the evidence.
 
-### Blocker (M7 NOT shippable as green)
+### Blocker (RESOLVED by the confirmation build below — kept for history)
 
 Per the 3x-fail rule, no 4th build was attempted. To finish M7, one
 confirmation build is needed: `docker build -t re-box:m7 .` (expected green —
@@ -463,6 +463,42 @@ and the best-effort headless start (`mcp-reva` stdio `initialize` +
 already documented in README stands). Healthcheck optional-path logic was
 unit-probed on the host (missing optional → `skip`, exit path unaffected;
 present → `ok`). Lean `ARG=0` paths are code-reviewed only, never built.
+
+### Confirmation build (rework 1) — GREEN (2026-10-18 UTC)
+
+`docker build -t re-box:m7 .` → exit 0 (only change since attempt 3:
+canonical clone dir `SRC_DIR=/tmp/reverse-engineering-assistant`; full log
+`/tmp/opencode/m7-confirm.log`). Final-37/37 gates all green inside the
+image: `die 3.21`, `M7 DIE gate passed`, extension jar present,
+`mcp-reva --help` ok, `M7 opencode.json mcp.reva gate passed`,
+`M7 ReVa load gate passed`, plus all M4/M5/M6 gates re-green
+(doctor scoped healthy ghidra 12.1.4 + jadx; doctor client zero
+non-licensed missing; Ghidra decompile 8694 bytes `main` present).
+Final image `re-box:m7` manifest
+`sha256:7982ee2da040e6c4e3a4764d46d57b50909597eafaaf02738ff4f79e88db2076`
+(10.9 GB).
+
+Post-build runtime probes (trimmed; full text
+`docs/evidence/m7/confirm-probes.log`):
+
+- `diec --version` → `die 3.21` (both `diec` and `/usr/local/bin/diec`).
+- `mcp-reva --help` → exit 0 (ReVa stdio MCP usage).
+- Extension dir: `.../Ghidra/Extensions/reverse-engineering-assistant/`
+  holds `extension.properties` (version stamp `12.1.4` == baked Ghidra,
+  no mismatch warning), `lib/reverse-engineering-assistant.jar`
+  (513125 bytes), jetty 12.1.14 / mcp-core-2.0.1 dependency jars.
+- `opencode.json`: `mcp.rea` (compact env) + `mcp.reva`
+  (`{type local, command [mcp-reva]}`, GHIDRA/JAVA env) + both plugin
+  entries + 11 `watcher.ignore` entries.
+- Best-effort headless stdio round-trip (300 s budget): `initialize` →
+  `serverInfo {ReVa 7.3.2.dev11+ga05a6b0a1}` → `tools/list` → **86 tools**
+  (get-symbols, get-decompilation, trace-data-flow-*, diff-create-session,
+  …). Ghidra boot ~90 s in-container; stderr ends
+  `Bridge ready - stdio transport active`. SUCCEEDED — the M7 fallback
+  position is now exceeded by a verified live round-trip.
+
+Blocker from attempts 1–3 RESOLVED. M7 shippable as green. No lean-ARG
+builds were run (code-review-only per brief); no secrets touched.
 
 ### Files changed (explicit add set for the M7 commit)
 

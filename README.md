@@ -34,7 +34,7 @@ opencode-rea spec) for the full milestone plan.
 | Workdir | `/workspace` (mount point) |
 | M6 wire-up | `rea setup --client opencode` (mcp.rea + compact env), `@heretek-ai/opencode-rea` plugin, curated RE skills + `reverse-engineer-anything` in `~/.agents/skills`, `operator-helper install opencode-v2`, `watcher.ignore` for targets/captures artefacts |
 | M7 fast triage | DIE **3.21** (`diec` on `PATH`, `/usr/local/bin/diec`, Ubuntu 24.04 `.deb`) |
-| M7 headless RE | ReVa **7.3.1** — Ghidra extension built from source (tag `v7.3.1`) against the baked Ghidra 12.1.4 + `mcp-reva` CLI (`/usr/local/bin/mcp-reva`), registered as `mcp.reva` (`type: local`) in `opencode.json` |
+| M7 headless RE | ReVa (pinned commit `a05a6b0`, `7.3.2.dev11`) — Ghidra extension built from source against the baked Ghidra 12.1.4 + `mcp-reva` CLI (`/usr/local/bin/mcp-reva`), registered as `mcp.reva` (`type: local`) in `opencode.json` |
 | Entrypoint | `scripts/entrypoint.sh` gates `ps` + `/usr/bin/prlimit`, then `exec opencode` in `/workspace` |
 | Compose | `docker-compose.yml`: `./workspace:/workspace`, `./targets:/workspace/targets:ro`, `cap_add SYS_PTRACE`, host provider key |
 
@@ -120,12 +120,15 @@ docker build -t re-box:m7-lean \
   `command: ["mcp-reva"]`) in `opencode.json` whenever `mcp-reva` is on
   `PATH` (skipped silently in lean images).
 - **Headless note**: a full ReVa headless boot (Ghidra init + MCP
-  `tools/list` round-trip) is heavy (~1–2 min, GBs of RAM), so the build
-  gate proves *load* (extension installed with matching version stamp,
-  `mcp-reva --help`, `import reva_cli`, `mcp.reva` registered) rather than
-  blocking the build on a live server round-trip. Runtime proof is recorded
-  in `docs/NOTES.md`. Start it at runtime with `mcp-reva` (stdio MCP) from
-  any workspace directory.
+  `tools/list` round-trip) is heavy (~90 s boot in-container, GBs of RAM),
+  so the build gate proves *load* (extension installed with matching
+  version stamp, `mcp-reva --help`, `import reva_cli`, `mcp.reva`
+  registered) rather than blocking the build on a live server round-trip.
+  The live round-trip is verified post-build and recorded in `docs/NOTES.md`
+  + `docs/evidence/m7/confirm-probes.log` (`initialize` →
+  `serverInfo ReVa 7.3.2.dev11+ga05a6b0a1` → `tools/list` → 86 tools).
+  Start it at runtime with `mcp-reva` (stdio MCP) from any workspace
+  directory.
 
 ## What setup-rea.sh does (M6 wire-up)
 
