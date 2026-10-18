@@ -6,8 +6,7 @@ container starts ready to reverse-engineer. Companion to
 OpenCode plugin); see `docs/IMPLEMENTATION_PROMPT.md` (copy of the
 opencode-rea spec) for the full milestone plan.
 
-> Status: **M5 engine contract**. M6 (wire-up), M7 (ReVa/DIE), M8 (smoke/PRs)
-> land in later milestones.
+> Status: **M6 wire-up**. M7 (ReVa/DIE), M8 (smoke/PRs) land in later milestones.
 
 ## What's inside (M5)
 
@@ -33,6 +32,9 @@ opencode-rea spec) for the full milestone plan.
 | Python venv | `/opt/venvs/re-tools`: **pwntools 4.15.0** (+`pyelftools 0.33`, `unicorn 2.1.2`), **mitmproxy 12.2.3**, Unblob 26.6.4 |
 | User | non-root `re` |
 | Workdir | `/workspace` (mount point) |
+| M6 wire-up | `rea setup --client opencode` (mcp.rea + compact env), `@heretek-ai/opencode-rea` plugin, curated RE skills + `reverse-engineer-anything` in `~/.agents/skills`, `operator-helper install opencode-v2`, `watcher.ignore` for targets/captures artefacts |
+| Entrypoint | `scripts/entrypoint.sh` gates `ps` + `/usr/bin/prlimit`, then `exec opencode` in `/workspace` |
+| Compose | `docker-compose.yml`: `./workspace:/workspace`, `./targets:/workspace/targets:ro`, `cap_add SYS_PTRACE`, host provider key |
 
 Ghidra and JADX both run on the full JDK 21 (Gotcha 9). IDA and Hopper are
 licensed and never baked in — see "How to mount IDA / Hopper" below.
@@ -53,15 +55,24 @@ left unset (setting the former without the latter fails REA validation).
 
 ```sh
 # Build (must exit 0)
-docker build -t re-box:m5 .
+docker build -t re-box:m6 .
 
-# Run interactive, workspace mounted
-docker run --rm -it -v "$PWD/workspace:/workspace" re-box:m5 bash
+# Run interactive, workspace mounted (compose adds targets:ro + SYS_PTRACE)
+mkdir -p workspace targets
+ANTHROPIC_API_KEY=... docker compose run --rm re-box
+
+# Or plain docker:
+docker run --rm -it -v "$PWD/workspace:/workspace" \
+  -v "$PWD/targets:/workspace/targets:ro" \
+  --cap-add SYS_PTRACE re-box:m6
 
 # Inside: node --version  # v22.x
-#         rea doctor --client opencode --json  # ghidra + jadx available
+#         rea doctor --client opencode --json  # healthy, registration:opencode ok
 #         rea analyze /opt/re-box/samples/hello --provider ghidra --json
 ```
+
+The entrypoint gates on `ps` and `/usr/bin/prlimit` (fail-closed), then
+`exec`s `opencode` with `/workspace` as the workdir.
 
 Acceptance is enforced **inside the build** (fail-closed, never by grepping
 config): JADX JAR sha256 re-verified; `$GHIDRA_INSTALL_DIR/support/analyzeHeadless`
@@ -73,9 +84,32 @@ Wakaru 1.14.0 version gates; `healthcheck.mjs` green; scoped
 providers; and `rea analyze` on the bundled tiny ELF returns real Ghidra
 output. Evidence in `docs/NOTES.md`.
 
-`docker-compose.yml` (M6) will mount `./workspace:/workspace`,
-`./targets:/workspace/targets:ro`, add `cap_add: [SYS_PTRACE]` for gdb/rizin
-debug sessions, and take the model provider key from the host environment.
+`docker-compose.yml` mounts `./workspace:/workspace`,
+`./targets:/workspace/targets:ro`, adds `cap_add: [SYS_PTRACE]` for gdb/rizin
+debug sessions, and takes the model provider key from the host environment
+(`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` pass through only when set on the
+host — never baked into the image).
+
+## What setup-rea.sh does (M6 wire-up)
+
+At build time, as the `re` user, `scripts/setup-rea.sh` (fail-closed,
+idempotent):
+
+1. `npx -y rea-agents@6.5.0 setup --client opencode --yes` — writes the
+   `mcp.rea` block and installs the `reverse-engineer-anything` skill.
+2. `opencode plugin add @heretek-ai/opencode-rea` — the thin RE plugin.
+3. Copies the curated skill bundle from the image (`/opt/re-box/skills`,
+   extracted at build from the pinned `@heretek-ai/opencode-rea@0.1.2`
+   tarball: `rea-evidence-report`, `rea-investigation`, `rea-opencode`,
+   `rea-reconstruction`) into `~/.agents/skills` — copy-from-image, so no
+   network is needed at container start. `reverse-engineer-anything` is
+   never overwritten (Gotcha 14).
+4. `operator-helper install opencode-v2` — operator-memory (locked Decision 2).
+5. Merges `"environment": {"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"}` into
+   `mcp.rea` with `jq` (keeps everything `rea setup` wrote) and adds the
+   `watcher.ignore` list (`targets/**`, `captures/**`, `ghidra_projects/**`,
+   `.rea/**`, `*.gpr`, `*.rep/**`, `*.idb`, `*.i64`, `*.pcap*`, `*.core`,
+   `*.dmp`).
 
 ## How to mount IDA / Hopper
 
@@ -112,12 +146,15 @@ docker run --rm -it -e OPENCODE_API_KEY="$OPENCODE_API_KEY" \
 ## Layout
 
 ```
-Dockerfile            # multi-stage; base + engines + acceptance checks
+Dockerfile            # multi-stage; base + engines + M6 wire-up + acceptance
 .dockerignore
+docker-compose.yml    # M6: workspace/targets mounts, SYS_PTRACE, host key env
 README.md             # this file
 docs/IMPLEMENTATION_PROMPT.md  # copy of the opencode-rea spec for contributors
 docs/NOTES.md         # build evidence + discovery log
-scripts/              # install-ghidra.sh, install-jadx.sh, healthcheck.mjs, setup-rea.sh (M6), smoke.sh (M8)
+docs/reports/         # per-milestone implementation reports
+scripts/              # install-ghidra.sh, install-jadx.sh, healthcheck.mjs,
+                      # setup-rea.sh (M6), entrypoint.sh (M6), smoke.sh (M8)
 config/env.defaults   # single source of truth for every REA_* engine path
 .github/workflows/build.yml  # build image (smoke lands in M8)
 ```

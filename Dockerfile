@@ -1,4 +1,4 @@
-# re-box — reproducible reverse-engineering container (M5 engine contract)
+# re-box — reproducible reverse-engineering container (M6 wire-up)
 #
 # Multi-stage build:
 #   Stage 1 (system): Ubuntu 24.04 + APT toolchain (JDK 21 full, procps ps,
@@ -6,7 +6,10 @@
 #                     NodeSource keyring prerequisites).
 #   Stage 2 (final):  Node 22 (NodeSource), Bun, OpenCode CLI 2.0.32
 #                     (pinned, locked), all M5 analysis engines, non-root `re`
-#                     user, /workspace.
+#                     user, /workspace, M6 REA wire-up (setup-rea.sh as `re`:
+#                     rea setup + opencode-rea plugin + skill bundle +
+#                     operator-memory + compact profile + watcher.ignore),
+#                     entrypoint gates ps/prlimit then execs opencode.
 #
 # M5 engines (IMPLEMENTATION_PROMPT Sec 4.4, pinned):
 #   Ghidra 12.1.4 (NSA release, sha-verified) + full JDK 21,
@@ -241,8 +244,45 @@ RUN useradd -m -s /bin/bash re \
   && mkdir -p /workspace \
   && chown re:re /workspace
 
+# ---- M6 wire-up (IMPLEMENTATION_PROMPT Sec 6 M6; root-owned inputs) ---------
+# jq: the opencode.json merge in setup-rea.sh.
+# Curated skill bundle (copy-from-image, documented choice): the published
+# @heretek-ai/opencode-rea skill packs, pinned, extracted to
+# /opt/re-box/skills. setup-rea.sh copies them into ~/.agents/skills and
+# never overwrites reverse-engineer-anything (Gotcha 14).
+# operator-helper: installs operator-memory for OpenCode V2 (Decision 2).
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends jq \
+  && rm -rf /var/lib/apt/lists/* \
+  && jq --version
+
+ARG REBOX_REA_PLUGIN_VERSION=0.1.2
+RUN set -eux; \
+  mkdir -p /opt/re-box/skills; \
+  cd /tmp; \
+  TARBALL="$(npm pack "@heretek-ai/opencode-rea@${REBOX_REA_PLUGIN_VERSION}" --silent | tail -n 1)"; \
+  test -n "$TARBALL"; \
+  test -f "/tmp/$TARBALL"; \
+  tar -xzf "/tmp/$TARBALL" -C /tmp; \
+  test -f /tmp/package/skills/rea-opencode/SKILL.md; \
+  cp -r /tmp/package/skills/* /opt/re-box/skills/; \
+  rm -rf "/tmp/$TARBALL" /tmp/package; \
+  ls /opt/re-box/skills
+
+RUN npm install -g "@aerovato/operator-helper@1.8.0" \
+  && operator-helper --help 2>&1 | grep -q 'install opencode-v2'
+
+COPY --chown=re:re scripts/setup-rea.sh scripts/entrypoint.sh /opt/re-box/scripts/
+RUN chmod +x /opt/re-box/scripts/setup-rea.sh /opt/re-box/scripts/entrypoint.sh \
+  && sh -n /opt/re-box/scripts/setup-rea.sh \
+  && sh -n /opt/re-box/scripts/entrypoint.sh
+
 WORKDIR /workspace
 USER re
+
+# M6 wire-up runs as `re` at build time (idempotent; the entrypoint only
+# re-checks prerequisites, it does not re-run setup).
+RUN /opt/re-box/scripts/setup-rea.sh
 
 # Acceptance checks (fail closed: any mismatch fails the build).
 # M4 base checks first, then the M5 engine contract — every binary check
@@ -293,6 +333,22 @@ RUN set -eux; \
   rea analyze /opt/re-box/samples/hello --provider ghidra --json > /tmp/ghidra-hello.json; \
   wc -c /tmp/ghidra-hello.json; \
   node -e 'const fs=require("fs");const raw=fs.readFileSync("/tmp/ghidra-hello.json","utf8");if(!/main/.test(raw)){console.error("decompile: no main symbol in report");process.exit(1);}for(const marker of ["missing_analysis_engine","provider_missing","engine-missing","not_configured"]){if(raw.includes(marker)){console.error(`decompile: engine-missing marker ${marker}`);process.exit(1);}}console.log("ghidra decompile gate passed");'
+
+# ---- M6 wire-up acceptance (runs INSIDE the image, as `re`) ----------------
+# setup-rea.sh already ran above; re-assert its contract here so the build
+# fails closed: opencode.json has mcp.rea (compact env) + plugin entry +
+# watcher.ignore, the skills are on disk, and the entrypoint gates pass.
+RUN set -eux; \
+  node -e 'const fs=require("fs"),os=require("os"),path=require("path");const p=path.join(os.homedir(),".config/opencode/opencode.json");const c=JSON.parse(fs.readFileSync(p,"utf8"));if(!c.mcp||!c.mcp.rea)throw new Error("mcp.rea block missing");if(c.mcp.rea.environment?.REA_MCP_INPUT_SCHEMA_PROFILE!=="compact")throw new Error("compact profile missing on mcp.rea");if(!(c.plugins??[]).some(s=>String(s).includes("opencode-rea")))throw new Error("opencode-rea plugin entry missing");if(!(c.plugins??[]).some(s=>String(s).includes("operator-opencode-v2")))throw new Error("operator-opencode-v2 plugin entry missing");for(const g of ["targets/**","captures/**","ghidra_projects/**",".rea/**","*.gpr","*.rep/**","*.idb","*.i64","*.pcap*","*.core","*.dmp"]){if(!(c.watcher?.ignore??[]).includes(g))throw new Error("watcher.ignore missing "+g);}console.log("M6 opencode.json gate passed");'; \
+  test -f "$HOME/.agents/skills/reverse-engineer-anything/SKILL.md"; \
+  for s in rea-evidence-report rea-investigation rea-opencode rea-reconstruction; do test -f "$HOME/.agents/skills/$s/SKILL.md"; done; \
+  command -v ps; \
+  /usr/bin/prlimit --version; \
+  /opt/re-box/scripts/entrypoint.sh --help | grep -q 'OpenCode command line interface'; \
+  echo "M6 wire-up acceptance checks passed"
+
+ENTRYPOINT ["/opt/re-box/scripts/entrypoint.sh"]
+CMD []
 
 HEALTHCHECK --interval=5m --timeout=2m --start-period=1m \
   CMD node /opt/re-box/scripts/healthcheck.mjs || exit 1

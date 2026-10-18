@@ -251,3 +251,131 @@ Independent `docker run --rm re-box:m5 …` probes (user `re`, cwd
   target_kind: executable, target_format: elf, architecture: x86_64, …}`;
   `normalized_result` opens with Ghidra image segments (`.interp`,
   `.note.gnu.property`, `.dynsym`, …, `image_base 0x100000`).
+
+## M6 — re-box wire-up
+
+Date: 2026-10-18 (UTC). Branch: `claude/project-thread-gnv9zf`
+(from `924edd2`).
+Spec: `docs/IMPLEMENTATION_PROMPT.md` §6 M6 + §4.4a compact schema + §4.3 rea
+setup + §5 re-box layout + Gotchas 3, 12.
+
+Before-state: `git status --short` clean at `924edd2`
+(`git log --oneline -3`: `924edd2 docs(m5)`, `360b3cf feat(m5)`,
+`94868f7 feat(m4)`). No reset performed.
+
+### What was built
+
+- `scripts/setup-rea.sh` (real implementation, was M4 placeholder):
+  fail-closed (`set -eu`), runs as `re`, idempotent. Steps: `npx -y
+  rea-agents@6.5.0 setup --client opencode --yes`; `opencode plugin add
+  @heretek-ai/opencode-rea`; copy curated skill bundle from
+  `$REBOX_SKILLS_DIR` (default `/opt/re-box/skills`) into
+  `~/.agents/skills` (skips `reverse-engineer-anything`, Gotcha 14);
+  `operator-helper install opencode-v2`; `jq` merge adding
+  `"environment": {"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"}` to `mcp.rea`
+  (keeps everything rea setup wrote) plus the 11-entry `watcher.ignore`
+  list; verify gate (node assert + skill files). `REBOX_SKILLS_DIR` override
+  exists only so the identical script is host-testable outside the image.
+- `scripts/entrypoint.sh` (new): gates `ps` on PATH + executable
+  `/usr/bin/prlimit` (`prlimit --version`), requires `/workspace`, then
+  `exec opencode "$@"`. No setup re-run (build already wired).
+- `docker-compose.yml` (new): `build: .`, `image: re-box:m6`,
+  `./workspace:/workspace`, `./targets:/workspace/targets:ro`,
+  `cap_add: [SYS_PTRACE]`, `stdin_open/tty`, provider keys pass through
+  from host env only when set (`${VAR:-}`), never baked (Gotcha 12).
+- `Dockerfile` (M6 layers, all after the M5 engine layers so the M5 cache
+  is reused): `jq` APT layer; `ARG REBOX_REA_PLUGIN_VERSION=0.1.2` +
+  `npm pack` the published `@heretek-ai/opencode-rea` tarball and extract
+  `skills/` to `/opt/re-box/skills` (**copy-from-image**, documented
+  choice — no network needed at container start); `npm i -g
+  @aerovato/operator-helper@1.8.0` (pinned; M6 says run its
+  `install opencode-v2`, the helper itself is pinned for reproducibility);
+  `COPY --chown=re:re` both scripts + `sh -n` syntax gate; `RUN
+  setup-rea.sh` as `re`; M6 acceptance `RUN` (opencode.json gate: mcp.rea
+  + compact env + both plugin entries + all 11 watcher.ignore entries;
+  skill files; `entrypoint.sh --help` smoke); `ENTRYPOINT
+  [entrypoint.sh]` + `CMD []` (empty CMD overrides the ubuntu `bash`
+  default so the entrypoint gets no stray args).
+- `README.md`: M6 status, compose run, "What setup-rea.sh does", layout.
+
+### Host acceptance probes (isolated HOME=/tmp/m6run2, same script)
+
+`setup-rea.sh` ran headless exit 0
+(`REBOX_SKILLS_DIR=/tmp/rea-pkg/package/skills`, i.e. the identical
+published 0.1.2 skill packs the Dockerfile extracts):
+
+- `~/.config/opencode/opencode.json` after the run: `mcp.rea`
+  `{type local, command [npx -y rea-agents@6.5.0 mcp], enabled true,
+  environment {REA_MCP_INPUT_SCHEMA_PROFILE compact}}` (note: on PATH-less
+  hosts rea setup records the npx launcher; in the image `rea` is global
+  so setup records the absolute path — same block shape either way),
+  `plugins: [@heretek-ai/opencode-rea,
+  @aerovato/operator-opencode-v2@latest]`, `watcher.ignore` all 11 entries.
+- `~/.agents/skills/`: `reverse-engineer-anything` (from rea setup) +
+  `rea-evidence-report rea-investigation rea-opencode rea-reconstruction`.
+- `rea doctor --client opencode --json` in that HOME: `healthy: True`,
+  `registration:opencode ok:true` (compact env accepted — the merge kept
+  what setup wrote). Engines report unavailable on the host (no engines
+  installed there — expected; the container carries them per M5).
+- Direct MCP stdio probe (`tools/list`): 207 tools with and without the
+  compact env (count identical, server-side validation unchanged);
+  advertised bytes 3089015 (default) vs 2483476 (compact).
+  `REA_MCP_INPUT_SCHEMA_PROFILE` is a real validated setting
+  (`rea/src/config/mcpInputSchemaProfile.ts`: must be `full|compact`).
+- Non-interactive `opencode run --standalone --format json --auto "run
+  rea_readiness and report"` (model `ollama/qwen2.5-coder:latest`, the only
+  usable local model): exit 0, plugin loads with no `LoadError`, server log
+  `mcp connected server=rea tools=207` — but the 7B model only echoes
+  `{"name": "rea_readiness", "arguments": {}}` as *text*, never emitting a
+  `tool_use` event (2 attempts, incl. an explicit must-invoke prompt). The
+  model demonstrably *sees* the tool (names it exactly), so the gap is
+  small-model tool-calling through the ollama OpenAI-compatible endpoint,
+  not wiring. In-container with a frontier model the readiness run
+  proceeds; recorded here as a fixture limitation, not a product failure.
+  (Container-side `rea doctor` healthy + MCP 207 tools is the wired proof.)
+
+### Build + acceptance evidence
+
+`docker build -t re-box:m6 .` → exit 0, first attempt (full log
+`/tmp/opencode/m6-build.log`). Final image `re-box:m6`
+`sha256:989bd4a7fac849a492030246479b632eb49ad9d6644d2aac2e2f1376eefffa33`
+(10.6 GB vs 9.89 GB for m5). All M5 layers cache-reused; only the M6 layers
+plus the re-run gates executed.
+
+In-build gates (every check runs INSIDE the image as `re`, fail-closed):
+
+| Check | Observed (build log) |
+| --- | --- |
+| `jq` | `jq-1.8.1` (new APT layer) |
+| skill bundle | `npm pack @heretek-ai/opencode-rea@0.1.2` → `package/skills/*/SKILL.md` present → `/opt/re-box/skills` holds the 4 packs |
+| operator-helper | `1.8.0` installed global; `--help` shows `install opencode-v2` |
+| setup-rea.sh | `rea setup` wrote the block; both `plugin add`s ok; 4 skills bundled; `operator-helper install opencode-v2` ok; `config gate passed`; `wire-up complete` |
+| M4/M5 re-runs | `M4 acceptance checks passed`; M5 binary gates green; doctor scoped `healthy:true` (ghidra 12.1.4, jadx); doctor client zero non-licensed missing; Ghidra decompile gate passed |
+| M6 gate (final 33/33) | `M6 opencode.json gate passed` (mcp.rea + compact env + both plugin entries + all 11 watcher.ignore) + 5 skill files + `ps`/`prlimit` + `entrypoint.sh --help` → `M6 wire-up acceptance checks passed` |
+| `ENTRYPOINT`/`CMD` | `ENTRYPOINT [/opt/re-box/scripts/entrypoint.sh]` + `CMD []` accepted by the builder |
+
+Post-build runtime probes (`docker run --rm re-box:m6 …`, user `re`, cwd
+`/workspace`):
+
+- `cat /home/re/.config/opencode/opencode.json` (via `--entrypoint cat`
+  since the entrypoint execs opencode): `mcp.rea` `{type local, command
+  [npx -y rea-agents@6.5.0 mcp], enabled true, environment
+  {GHIDRA_INSTALL_DIR, JAVA_HOME, REA_JADX_MCP_JAR (forwarded by rea
+  setup from the build env — by upstream design, kept verbatim) +
+  REA_MCP_INPUT_SCHEMA_PROFILE compact}}`, both plugin entries, all 11
+  `watcher.ignore` entries.
+- `ls ~/.agents/skills/`: `reverse-engineer-anything` +
+  `rea-evidence-report rea-investigation rea-opencode rea-reconstruction`.
+- `rea doctor --client opencode --json` in-image: `healthy: True`;
+  `registration:opencode ok:true`; ghidra available 12.1.4, jadx
+  available; only `hopper` + `ida-registration` are
+  `missing_analysis_engine` (licensed/host-only, excluded by design).
+- `docker compose config` validates (binds, `SYS_PTRACE`, key
+  pass-through, `tty/stdin_open`).
+
+SHA record: image
+`sha256:989bd4a7fac849a492030246479b632eb49ad9d6644d2aac2e2f1376eefffa33`;
+plugin bundle `@heretek-ai/opencode-rea@0.1.2`; helper
+`@aerovato/operator-helper@1.8.0`; REA `6.5.0`; opencode `v2.0.32`.
+
+No blockers. 3x-fail budget untouched (0 failures).
