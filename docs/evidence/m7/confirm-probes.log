@@ -1,0 +1,55 @@
+# M7 confirmation build (rework 1) — post-build probes, 2026-10-18 UTC
+# Build: `docker build -t re-box:m7 .` → BUILD_EXIT=0, full log /tmp/opencode/m7-confirm.log
+# Image: re-box:m7 7982ee2da040, manifest sha256:7982ee2da040e6c4e3a4764d46d57b50909597eafaaf02738ff4f79e88db2076, 10.9GB
+
+## diec --version (both paths)
+# docker run --rm --entrypoint diec re-box:m7 --version
+die 3.21
+# docker run --rm --entrypoint /usr/local/bin/diec re-box:m7 --version
+die 3.21
+
+## mcp-reva --help (exit 0, trimmed)
+usage: mcp-reva [-h] [--config CONFIG] [--verbose] [--version]
+                [--disable-tool-group GROUP | --tool-group GROUP]
+ReVa MCP server with stdio transport for Claude CLI integration
+options:
+  -h, --help            show this help message and exit
+  --config CONFIG       Path to ReVa configuration file
+  --verbose, -v         Enable verbose logging
+  --version             show program's version number and exit
+
+## Ghidra extension dir (trimmed)
+# ls $GHIDRA_INSTALL_DIR/Ghidra/Extensions/reverse-engineering-assistant[/lib]
+extension.properties  Module.manifest  lib/reverse-engineering-assistant.jar (513125 bytes)
+lib/reverse-engineering-assistant-src.zip  lib/: mcp-core-2.0.1, mcp-json-jackson2-2.0.1,
+jetty 12.1.14 x5, jackson x4, json-schema-validator-2.0.4, reactor-core-3.7.0, slf4j, snakeyaml
+extension.properties version stamp: 12.1.4 == baked Ghidra 12.1.4 (matches, no warning)
+
+## opencode.json mcp blocks (in-image /home/re/.config/opencode/opencode.json)
+mcp.rea: {type local, command [npx -y rea-agents@6.5.0 mcp], enabled true,
+  environment {GHIDRA_INSTALL_DIR, JAVA_HOME, REA_JADX_MCP_JAR, REA_MCP_INPUT_SCHEMA_PROFILE compact}}
+mcp.reva: {type local, command [mcp-reva], environment {GHIDRA_INSTALL_DIR, JAVA_HOME}}
+plugins: [@heretek-ai/opencode-rea, @aerovato/operator-opencode-v2@latest]
+watcher.ignore entries: 11
+
+## best-effort mcp-reva stdio initialize + tools/list (300s budget; script /tmp/opencode/m7-reva-probe.mjs)
+# docker run --rm -i --entrypoint /usr/local/bin/mcp-reva re-box:m7  (stdin: initialize → notifications/initialized → tools/list)
+INIT-RESULT keys: [capabilities, protocolVersion, serverInfo]
+serverInfo: {"name":"ReVa","version":"7.3.2.dev11+ga05a6b0a1"}
+TOOLS-COUNT: 86
+TOOL-NAMES (first 60): get-symbols-count,get-symbols,get-strings-count,get-strings,get-function-count,
+get-functions,get-functions-by-similarity,set-function-prototype,get-undefined-function-candidates,
+create-function,function-tags,get-decompilation,search-decompilation,rename-variables,
+change-variable-datatypes,set-decompilation-comment,get-callers-decompiled,get-referencers-decompiled,
+get-memory-blocks,read-memory,find-cross-references,find-constant-uses,find-constants-in-range,
+list-common-constants,list-imports,list-exports,find-import-references,resolve-thunk,list-project-files,
+checkin-program,analyze-program,analysis-status,analysis-cancel,list-analyzers,change-processor,
+import-file,capture-reva-debug-info,get-data,apply-data-type,create-label,get-data-type-archives,
+get-data-types,get-data-type-by-string,parse-c-structure,validate-c-structure,get-structure-info,
+list-structures,apply-structure,delete-structure,parse-c-header,get-call-graph,get-call-tree,
+find-common-callers,trace-data-flow-backward,trace-data-flow-forward,find-variable-accesses,
+analyze-vtable,find-vtable-callers,find-vtables-containing-function,diff-create-session
+stderr tail: PyGhidra initialized → Project manager ready → ReVa server ready on port 45603 →
+Bridge ready - stdio transport active
+Result: full headless round-trip SUCCEEDED (~90s Ghidra boot inside container).
+Container SIGKILLed at the 300s watchdog after results were captured (stdio bridge stays open by design).

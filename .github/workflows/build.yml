@@ -1,0 +1,22 @@
+# re-box CI: build the image, then run the end-to-end smoke.
+#
+# The build itself runs the in-Dockerfile acceptance checks (M4/M5/M6/M7
+# RUN gates — any mismatch fails the build). scripts/smoke.sh then runs
+# one live investigation inside the built image (healthcheck + rea analyze
+# of the bundled sample + report verification), fail-closed exit 0/1.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t re-box:ci .
+      - name: End-to-end smoke
+        run: IMAGE=re-box:ci SKIP_BUILD=1 ./scripts/smoke.sh

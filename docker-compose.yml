@@ -1,0 +1,36 @@
+# re-box M6: ready-to-reverse-engineer container (IMPLEMENTATION_PROMPT Sec 6 M6).
+#
+# The image already runs `scripts/setup-rea.sh` at build time (as the `re`
+# user), so a fresh container starts wired: REA MCP registration (compact
+# schema profile), the thin opencode-rea plugin, curated RE skills, and
+# operator-memory for OpenCode V2.
+#
+# Runtime mounts:
+#   ./workspace -> /workspace            (read-write scratch + session state)
+#   ./targets   -> /workspace/targets:ro (targets stay read-only in-container)
+#
+# Secrets policy (Gotcha 12): never bake API keys/tokens into the image or
+# commit them. Pass the model provider key from the host environment at
+# `docker compose run` time, e.g.:
+#   ANTHROPIC_API_KEY=... docker compose run --rm re-box
+# (prefer your provider's own env name; the image reads nothing at build time).
+name: re-box
+
+services:
+  re-box:
+    build: .
+    image: re-box:m6
+    container_name: re-box
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./workspace:/workspace
+      - ./targets:/workspace/targets:ro
+    cap_add:
+      - SYS_PTRACE
+    environment:
+      # Provider keys pass through from the host only when set; empty here
+      # means unset in the container. Add your provider's own name as needed.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
