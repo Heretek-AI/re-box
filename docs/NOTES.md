@@ -507,3 +507,67 @@ builds were run (code-review-only per brief); no secrets touched.
 `config/env.defaults`, `README.md`, `docs/NOTES.md` (this entry).
 `review/` was read-only reference only (never staged). No secrets touched.
 No push (per brief).
+
+## M8 — validation pass + smoke (2026-10-18 UTC)
+
+Branch: `claude/project-thread-gnv9zf` (from `3c068de feat(m7)`).
+Spec: `docs/IMPLEMENTATION_PROMPT.md` §6 M8 + §8 Definition of done.
+Pre-existing `??` paths left untouched per brief: `docs/evidence/m6/`,
+`docs/evidence/m7/qa-run.log`, `docs/evidence/m7/red-proofs.log`
+(evidence allowed, reported here).
+
+### Full-file re-read vs built (§6 Do / §8 DoD)
+
+| Item | State |
+| --- | --- |
+| M0–M3c opencode-rea | Done in the sibling repo (6 commits ahead on the same branch name); gates re-verified this milestone (see opencode-rea `docs/NOTES.md` M8 entry). |
+| M4 base image | Green in-image: Node `v22.23.3`, Bun `1.4.3`, JDK `21.0.12.1` full (`jdk.compiler`), opencode `v2.0.32`, `ps` procps-ng 4.0.4, `prlimit` util-linux 2.39.3. |
+| M5 engines | Green in-image: Ghidra 12.1.4 + JADX 0.7.1 (both sha-verified), rizin 0.9.1, objdump 2.42, gdb 15.1, adb 34.0.4, apktool 3.0.3, binwalk 3.1.0, unblob 26.6.4, tshark/capinfos 4.2.2, sigrok-cli 0.7.2, wakaru 1.14.0, WABT 1.0.42; `config/env.defaults` 26 entries all present (healthcheck); provider-scoped + client doctor gates green; real Ghidra decompile green. |
+| M5 `REA_GHIDRA_*` unset | Intentionally unset (REA env validation fails spec-without-language); recorded in M5 entry. |
+| M6 wire-up | Green: `rea setup` + plugin + skill bundle + operator-memory; `mcp.rea` carries `REA_MCP_INPUT_SCHEMA_PROFILE=compact`; 11 `watcher.ignore` entries; non-interactive readiness caveat recorded in M6 entry (small-model tool-calling fixture limit, not wiring). |
+| M7 ReVa + DIE | Green (rework 1 confirmation build): `die 3.21`, extension jar present, `mcp-reva --help` ok, `mcp.reva` block gate green, live headless `tools/list` → 86 tools. |
+| M8 `scripts/smoke.sh` | Implemented this milestone (was `exit 1` placeholder); exits 0 (evidence below). |
+| M8 `docs/NOTES.md` | This file (exists, every milestone + discrepancies recorded). |
+| M8 two PRs | Opened after this entry (URLs in the stage report). |
+| §8 `THIRD_PARTY_NOTICES.md` | Lives in opencode-rea (skill packs install on demand; re-box copies that published bundle copy-from-image — no new vendoring here). |
+| No PR template | Neither repo has one (`find -iname '*template*' -o -iname 'PULL_REQUEST*'`: no hits outside `node_modules`), so the fixed §6 body format is used verbatim. |
+
+### What was built
+
+- `scripts/smoke.sh` (real implementation, `#!/bin/sh`, `set -eu`,
+  executable): `IMAGE` (default `re-box:final`) / `SAMPLE` (default
+  `/opt/re-box/samples/hello`) / `SKIP_BUILD` overrides; requires `docker`
+  + `node` on PATH (fail-closed otherwise); resolves repo `ROOT` from the
+  script path; gate 0 = `docker build -t "$IMAGE" "$ROOT"`; gate 1 =
+  in-container `node /opt/re-box/scripts/healthcheck.mjs`; gate 2 =
+  `docker run --rm --entrypoint rea … analyze "$SAMPLE" --provider ghidra
+  --json` (entrypoint override because `entrypoint.sh` execs `opencode`);
+  gate 3 = `node -e` verification (report names `main`, none of the
+  engine-missing markers, valid JSON) printing the recorded finding, then
+  `SMOKE OK`. `shellcheck`: only SC2016 info (intentional `$` in JS
+  single-quoted string), `sh -n` clean.
+- `.github/workflows/build.yml`: build `re-box:ci`, then
+  `IMAGE=re-box:ci SKIP_BUILD=1 ./scripts/smoke.sh` (no double build).
+
+### Acceptance evidence
+
+`./scripts/smoke.sh` → exit 0 (single attempt, no failures):
+
+- Gate 0: `docker build -t re-box:final .` exit 0 (all layers cached —
+  Dockerfile unchanged since the green `re-box:m7` confirmation build;
+  same content → `re-box:final` 10.9 GB, identical size to `re-box:m7`).
+- Gate 1: `healthcheck: all 28 entries present` (26 env + compact +
+  analyzeHeadless).
+- Gate 2: `rea analyze` exit 0, non-empty JSON report.
+- Gate 3: finding recorded —
+  `evidence_id ev_325cfa2858ceaeb774be753aba3b4f9e5ae727195409c4094fcdb1e72492850f`,
+  subject `hello`, `sha256 fd924d44…b76`, `elf x86_64`. The evidence id
+  is byte-identical to the M5 in-build decompile gate's id: the same
+  sample analyzed twice yields the same finding (deterministic, not a
+  copy-paste).
+- No secrets touched (local analysis only, no provider key needed or read).
+
+### Files changed (explicit add set for the M8 commit)
+
+`scripts/smoke.sh`, `docs/NOTES.md` (this entry),
+`.github/workflows/build.yml`. No push until both repos validated.
