@@ -89,7 +89,8 @@ output. Evidence in `docs/NOTES.md`.
 `docker-compose.yml` mounts `./workspace:/workspace`,
 `./targets:/workspace/targets:ro`, adds `cap_add: [SYS_PTRACE]` for gdb/rizin
 debug sessions, and takes the model provider key from the host environment
-(`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` pass through only when set on the
+(`OPENCODE_GO_API_KEY` / `OPENCODE_API_KEY` / `ANTHROPIC_API_KEY` /
+`OPENAI_API_KEY` pass through only when set on the
 host — never baked into the image).
 
 ## Complementary triage (M7 — ReVa + DIE, opt-in)
@@ -178,7 +179,9 @@ Never bake API keys, tokens, or credentials into the image or commit them.
 Pass the model provider key at runtime:
 
 ```sh
-docker run --rm -it -e OPENCODE_API_KEY="$OPENCODE_API_KEY" \
+OPENCODE_GO_API_KEY=... docker compose run --rm re-box
+
+docker run --rm -it -e OPENCODE_GO_API_KEY="$OPENCODE_GO_API_KEY" \
   -v "$PWD/workspace:/workspace" re-box:m7
 ```
 
