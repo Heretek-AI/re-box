@@ -11,7 +11,7 @@
 # What it does (IMPLEMENTATION_PROMPT Sec 6 M6):
 #   1. `npx -y rea-agents@6.5.0 setup --client opencode --yes`
 #      (writes the `mcp.rea` block, installs `reverse-engineer-anything`).
-#   2. `opencode plugin add @heretek-ai/opencode-rea` (thin RE plugin).
+#   2. `opencode plugin add @heretek-ai/opencode-rea@0.1.2` (thin RE plugin).
 #   3. Copies the curated skill bundle from the image
 #      (`$REBOX_SKILLS_DIR`, default `/opt/re-box/skills`) into
 #      `~/.agents/skills` — copy-from-image (documented choice; the bundle
@@ -22,7 +22,8 @@
 #      into `mcp.rea` (jq; keeps everything rea setup wrote) and adds the
 #      `watcher.ignore` list for targets/captures/decompiler artefacts.
 #   6. (M7) If `mcp-reva` is on PATH (full image; lean ARG=0 skips lack it),
-#      registers the ReVa headless MCP server as `mcp.reva` (`type: local`).
+#      registers the ReVa headless MCP server as `mcp.reva` (`type: local`,
+#      startup/catalog timeout 180s for the ~90s Ghidra cold boot).
 set -eu
 
 log() { printf 'setup-rea: %s\n' "$*"; }
@@ -37,9 +38,10 @@ command -v node >/dev/null 2>&1 || fail 'node not found on PATH'
 log 'rea setup --client opencode --yes'
 npx -y rea-agents@6.5.0 setup --client opencode --yes
 
-# 2. Thin RE plugin (Decision: keep opencode-rea thin).
-log 'opencode plugin add @heretek-ai/opencode-rea'
-opencode plugin add @heretek-ai/opencode-rea
+# 2. Thin RE plugin (Decision: keep opencode-rea thin; pinned to the same
+#    0.1.2 the Dockerfile skill bundle is extracted from).
+log 'opencode plugin add @heretek-ai/opencode-rea@0.1.2'
+opencode plugin add @heretek-ai/opencode-rea@0.1.2
 
 # 3. Curated skill bundle: copy from the image.
 SKILLS_SRC="${REBOX_SKILLS_DIR:-/opt/re-box/skills}"
@@ -106,10 +108,13 @@ if command -v mcp-reva >/dev/null 2>&1; then
       (.mcp.reva // {}) + {
         "type": "local",
         "command": ["mcp-reva"],
-        "environment": {
-          "GHIDRA_INSTALL_DIR": $ghidra,
-          "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk-amd64"
-        }
+        "timeout": {"startup": 180000, "catalog": 180000},
+        "environment": (
+          (((.mcp.reva // {}).environment // {}) + {
+            "GHIDRA_INSTALL_DIR": $ghidra,
+            "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk-amd64"
+          })
+        )
       }
     )
   ' "$CONFIG" > "$tmp_reva"
@@ -137,6 +142,11 @@ if (process.env.REVA_EXPECTED === "1") {
     throw new Error("mcp.reva block missing (mcp-reva installed but not registered)");
   if (!(c.mcp.reva.command ?? []).includes("mcp-reva"))
     throw new Error("mcp.reva command missing mcp-reva");
+  const t = c.mcp.reva.timeout ?? {};
+  if (!(t.startup > 90000))
+    throw new Error("mcp.reva timeout.startup must exceed the ~90s ReVa cold boot");
+  if (!(t.catalog > 90000))
+    throw new Error("mcp.reva timeout.catalog must exceed the ~90s ReVa cold boot");
   console.log("setup-rea: mcp.reva gate passed");
 } else {
   console.log("setup-rea: mcp.reva skipped (lean image, mcp-reva absent)");

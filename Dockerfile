@@ -373,7 +373,7 @@ RUN set -eux; \
 RUN set -eux; \
   rea analyze /opt/re-box/samples/hello --provider ghidra --json > /tmp/ghidra-hello.json; \
   wc -c /tmp/ghidra-hello.json; \
-  node -e 'const fs=require("fs");const raw=fs.readFileSync("/tmp/ghidra-hello.json","utf8");if(!/main/.test(raw)){console.error("decompile: no main symbol in report");process.exit(1);}for(const marker of ["missing_analysis_engine","provider_missing","engine-missing","not_configured"]){if(raw.includes(marker)){console.error(`decompile: engine-missing marker ${marker}`);process.exit(1);}}console.log("ghidra decompile gate passed");'
+  node -e 'const fs=require("fs");const raw=fs.readFileSync("/tmp/ghidra-hello.json","utf8");if(!/main/.test(raw)){console.error("decompile: no main symbol in report");process.exit(1);}for(const marker of ["missing_analysis_engine","provider_missing","engine-missing","not_configured"]){if(raw.includes(marker)){console.error(`decompile: engine-missing marker ${marker}`);process.exit(1);}}const rep=JSON.parse(raw);const r=rep.result??rep;if(typeof r.evidence_id!=="string"||r.evidence_id==="")throw new Error("decompile: missing or empty evidence_id");const s=r.subject;const n=(typeof s==="string")?s:(s&&s.name);if(typeof n!=="string"||n==="")throw new Error("decompile: missing or empty subject name");const h=(s&&s.digest&&s.digest.sha256)||(s&&s.sha256);if(typeof h!=="string"||h==="")throw new Error("decompile: missing or empty subject sha256");console.log("ghidra decompile gate passed");'
 
 # ---- M6/M7 wire-up acceptance (runs INSIDE the image, as `re`) ------------
 # setup-rea.sh already ran above; re-assert its contract here so the build
@@ -401,7 +401,7 @@ RUN set -eux; \
   if [ "${REBOX_WITH_REVA:-1}" = "1" ]; then \
     test -f "$GHIDRA_INSTALL_DIR/Ghidra/Extensions/reverse-engineering-assistant/lib/reverse-engineering-assistant.jar"; \
     mcp-reva --help >/dev/null; \
-    node -e 'const fs=require("fs"),os=require("os"),path=require("path");const p=path.join(os.homedir(),".config/opencode/opencode.json");const c=JSON.parse(fs.readFileSync(p,"utf8"));if(!c.mcp?.reva)throw new Error("mcp.reva block missing");if(c.mcp.reva.type!=="local")throw new Error("mcp.reva is not type local");if(!(c.mcp.reva.command??[]).includes("mcp-reva"))throw new Error("mcp.reva command missing mcp-reva");console.log("M7 opencode.json mcp.reva gate passed");'; \
+    node -e 'const fs=require("fs"),os=require("os"),path=require("path");const p=path.join(os.homedir(),".config/opencode/opencode.json");const c=JSON.parse(fs.readFileSync(p,"utf8"));if(!c.mcp?.reva)throw new Error("mcp.reva block missing");if(c.mcp.reva.type!=="local")throw new Error("mcp.reva is not type local");if(!(c.mcp.reva.command??[]).includes("mcp-reva"))throw new Error("mcp.reva command missing mcp-reva");const t=c.mcp.reva.timeout??{};if(!(t.startup>90000))throw new Error("mcp.reva timeout.startup must exceed the ~90s ReVa cold boot");if(!(t.catalog>90000))throw new Error("mcp.reva timeout.catalog must exceed the ~90s ReVa cold boot");console.log("M7 opencode.json mcp.reva gate passed");'; \
     echo "M7 ReVa load gate passed"; \
   else echo "M7 ReVa skipped (REBOX_WITH_REVA=0 lean image)"; fi
 

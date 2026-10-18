@@ -73,12 +73,22 @@ let finding = null;
 try {
   const report = JSON.parse(raw);
   const r = report.result ?? report;
-  finding = {
-    evidence_id: r.evidence_id ?? r.evidenceId ?? null,
-    subject: r.subject ?? null,
-  };
+  const evidence_id = r.evidence_id ?? r.evidenceId ?? null;
+  const subject = r.subject ?? null;
+  const name = typeof subject === "string" ? subject
+    : (subject && typeof subject.name === "string" ? subject.name : null);
+  const sha256 = subject && typeof subject === "object"
+    ? ((subject.digest && subject.digest.sha256) || subject.sha256 || null)
+    : null;
+  if (typeof evidence_id !== "string" || evidence_id === "")
+    throw new Error("missing or empty evidence_id");
+  if (typeof name !== "string" || name === "")
+    throw new Error("missing or empty subject name");
+  if (typeof sha256 !== "string" || sha256 === "")
+    throw new Error("missing or empty subject sha256");
+  finding = { evidence_id: evidence_id, subject: { name: name, sha256: sha256 } };
 } catch (e) {
-  console.error(`smoke: report is not valid JSON: ${e.message}`);
+  console.error("smoke: report finding invalid: " + e.message);
   process.exit(1);
 }
 console.log(JSON.stringify(finding, null, 2));

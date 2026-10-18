@@ -10,6 +10,8 @@
 //
 // Non-path entries (VAR names listed in NON_PATH_VARS) are validated for
 // value instead of existence. Comment (#) and blank lines are ignored.
+// A process environment variable with the same name overrides the file value
+// (empty counts as unset); checks run against the effective value.
 // Usage: node scripts/healthcheck.mjs [env-file]
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -77,31 +79,39 @@ async function main() {
   }
   let failures = 0;
   for (const { name, value } of entries) {
+    // Effective runtime path: an exported env var wins (it is what the
+    // runtime actually sees), otherwise the file value. An empty-string env
+    // counts as unset. Per-line output stays byte-stable when no override is
+    // set; an active override is marked so the source is auditable.
+    const envVal = process.env[name];
+    const overridden = envVal !== undefined && envVal !== "";
+    const effective = overridden ? envVal : value;
+    const tag = overridden ? " (env override)" : "";
     if (NON_PATH_VARS.has(name)) {
       const expected = NON_PATH_VARS.get(name);
-      if (value !== expected) {
-        console.error(`healthcheck: FAIL ${name}=${value} (expected ${expected})`);
+      if (effective !== expected) {
+        console.error(`healthcheck: FAIL ${name}=${effective} (expected ${expected})`);
         failures += 1;
       } else {
-        console.log(`healthcheck: ok ${name}=${value}`);
+        console.log(`healthcheck: ok ${name}=${effective}${tag}`);
       }
       continue;
     }
-    if (!value.startsWith("/")) {
-      console.error(`healthcheck: FAIL ${name}=${value} (not an absolute path)`);
+    if (!effective.startsWith("/")) {
+      console.error(`healthcheck: FAIL ${name}=${effective} (not an absolute path)`);
       failures += 1;
       continue;
     }
-    if (!existsSync(value)) {
+    if (!existsSync(effective)) {
       if (OPTIONAL_PATH_VARS.has(name)) {
-        console.log(`healthcheck: skip ${name}=${value} (optional, not installed)`);
+        console.log(`healthcheck: skip ${name}=${effective} (optional, not installed)`);
         continue;
       }
-      console.error(`healthcheck: FAIL ${name}=${value} (missing)`);
+      console.error(`healthcheck: FAIL ${name}=${effective} (missing)`);
       failures += 1;
       continue;
     }
-    console.log(`healthcheck: ok ${name}=${value}`);
+    console.log(`healthcheck: ok ${name}=${effective}${tag}`);
   }
   for (const [label, path] of EXTRA_CHECKS) {
     try {

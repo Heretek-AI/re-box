@@ -158,12 +158,13 @@ Mount them at runtime and point REA at them:
 
 ```sh
 docker run --rm -it \
+  --entrypoint /bin/bash \
   -v "$PWD/workspace:/workspace" \
   -v /path/to/ida:/opt/ida:ro \
   -v /path/to/hopper:/opt/hopper:ro \
   -e REA_IDA_MCP_CONFIG=/workspace/ida-mcp.json \
   -e HOPPER_LAUNCHER_PATH=/opt/hopper/Hopper \
-  re-box:m5 bash
+  re-box:m7
 ```
 
 Set `REA_IDA_MCP_CONFIG` to your IDA MCP bridge config and
@@ -178,7 +179,7 @@ Pass the model provider key at runtime:
 
 ```sh
 docker run --rm -it -e OPENCODE_API_KEY="$OPENCODE_API_KEY" \
-  -v "$PWD/workspace:/workspace" re-box:m5 opencode
+  -v "$PWD/workspace:/workspace" re-box:m7
 ```
 
 (prefer your provider's own env name; the image reads nothing at build time).

@@ -571,3 +571,75 @@ Pre-existing `??` paths left untouched per brief: `docs/evidence/m6/`,
 
 `scripts/smoke.sh`, `docs/NOTES.md` (this entry),
 `.github/workflows/build.yml`. No push until both repos validated.
+
+## Review-fix wave (2026-10-18 UTC)
+
+Branch state: `claude/project-thread-gnv9zf` @ `8c9b236` (7 ahead of
+`origin/main`, PR #1 open). Five review findings, all verified against
+current code and all still valid — fixed minimally, validated, committed
+once, no push.
+
+- (a) README tags — VALID. `docker build` documents `-t re-box:m6` (line 60)
+  / `-t re-box:m7` (101) but the mount example ran `re-box:m5 bash` (166)
+  and secrets `re-box:m5 opencode` (181). Fixed: both examples now
+  `re-box:m7`; mount example gained `--entrypoint /bin/bash` (base
+  `ubuntu:24.04` ships bash; non-root `re` shell is `/bin/bash`) with the
+  trailing `bash` arg dropped (ENTRYPOINT already execs `opencode "$@"`,
+  so `bash` as command ran `opencode bash`); secrets example dropped the
+  trailing `opencode` (was `opencode opencode`). Evidence: README lines
+  160-181 post-fix.
+- (b) healthcheck ignores `process.env` — VALID. The loop checked the file
+  value only, so a runtime-exported override (e.g. retargeted engine path)
+  was never honored. Fixed: `effective = process.env[name]` when set and
+  non-empty, else the file value; NON_PATH exact-match, absolute-path and
+  `existsSync` checks all run against the effective value. Active overrides
+  are tagged `(env override)`; output is byte-stable when no override is
+  set (in-image Docker `ENV` mirrors the file, so values are identical and
+  only the tag differs — summary line `healthcheck: all N entries present`
+  unchanged, no gate greps per-line output). Evidence: `/tmp` harness —
+  override to missing dir fails, override to existing dir passes tagged,
+  NON_PATH mismatch via env fails, empty-string env counts as unset.
+- (c) `mcp.reva` without timeout — VALID. Block had no `timeout` while the
+  headless ReVa cold boot is ~90s (`docs/evidence/m7/confirm-probes.log`:
+  `tools/list` → 86 tools after ~90s Ghidra init). Supported shape verified
+  in `@opencode/schema` `TimeoutConfig` (`startup`/`catalog`/`execution`,
+  ms) and `@opencode/client` per-server `mcp.timeout`. Fixed: creation jq
+  now writes `"timeout": {"startup": 180000, "catalog": 180000}` (>90s on
+  both the server-startup and the tools-catalog paths) and merges
+  `((.mcp.reva.environment // {}) + …)` so a re-run preserves pre-existing
+  env keys; verify gate asserts both `> 90000`; `mcp.rea` untouched.
+  Evidence: `/tmp` jq converge/idempotency run + gate positive/negative/
+  lean (`REVA_EXPECTED=0`) runs; in-image `mcp.reva` block re-verified via
+  `docker run` on the rebuilt image.
+- (d) smoke gate 3/3 accepted empty finding fields — VALID. It extracted
+  `evidence_id`/`subject` but never required them non-empty. Actual report
+  shape (from `re-box:final` `rea analyze --provider ghidra --json`):
+  top-level `evidence_id ev_325c…`, `subject {name: hello,
+  digest: {sha256: fd924d44…}, …}` — sha256 nests under
+  `subject.digest.sha256`. Fixed: gate now fails closed unless
+  `evidence_id` is a non-empty string, subject has a non-empty `name`,
+  and `subject.digest.sha256 ?? subject.sha256` is non-empty; the same
+  checks were added to the Dockerfile Ghidra decompile gate before it
+  reports success (markers check kept). Evidence: positive on the real
+  report (same deterministic `ev_325c…` id) + four negatives
+  (empty id, nameless/sha-less subject, null subject, non-JSON) all exit 1.
+- (e) unpinned RE plugin — VALID. `opencode plugin add
+  @heretek-ai/opencode-rea` (line 42) vs Dockerfile
+  `ARG REBOX_REA_PLUGIN_VERSION=0.1.2` + pinned-tarball skill bundle and
+  README line 142 (`@0.1.2`). Fixed: pinned to
+  `@heretek-ai/opencode-rea@0.1.2` (header comment updated too).
+
+Validation: `sh -n` on `setup-rea.sh`/`smoke.sh`/`entrypoint.sh` clean;
+`node --check scripts/healthcheck.mjs` clean; full
+`docker build -t re-box:review-fix .` exit 0 (M4/M5/M6/M7 gates re-green,
+new `timeout.startup/catalog` + finding-field asserts pass);
+`IMAGE=re-box:review-fix ./scripts/smoke.sh` exit 0 with the unchanged
+deterministic finding; `SAMPLE=/nonexistent` still fails closed at gate 2.
+Secrets grep clean (only the documented runtime
+`OPENCODE_API_KEY="$OPENCODE_API_KEY"` passthrough). No `ctx.mcp.transform`
+added (re-box side N/A). `review/` untouched.
+
+### Files changed (explicit add set for the review-fix commit)
+
+`README.md`, `scripts/healthcheck.mjs`, `scripts/setup-rea.sh`,
+`scripts/smoke.sh`, `Dockerfile`, `docs/NOTES.md` (this entry). No push.
