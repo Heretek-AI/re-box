@@ -6,7 +6,7 @@ container starts ready to reverse-engineer. Companion to
 OpenCode plugin); see `docs/IMPLEMENTATION_PROMPT.md` (copy of the
 opencode-rea spec) for the full milestone plan.
 
-> Status: **M6 wire-up**. M7 (ReVa/DIE), M8 (smoke/PRs) land in later milestones.
+> Status: **M7 complementary triage**. M8 (smoke/PRs) lands next.
 
 ## What's inside (M5)
 
@@ -33,6 +33,8 @@ opencode-rea spec) for the full milestone plan.
 | User | non-root `re` |
 | Workdir | `/workspace` (mount point) |
 | M6 wire-up | `rea setup --client opencode` (mcp.rea + compact env), `@heretek-ai/opencode-rea` plugin, curated RE skills + `reverse-engineer-anything` in `~/.agents/skills`, `operator-helper install opencode-v2`, `watcher.ignore` for targets/captures artefacts |
+| M7 fast triage | DIE **3.21** (`diec` on `PATH`, `/usr/local/bin/diec`, Ubuntu 24.04 `.deb`) |
+| M7 headless RE | ReVa **7.3.1** — Ghidra extension built from source (tag `v7.3.1`) against the baked Ghidra 12.1.4 + `mcp-reva` CLI (`/usr/local/bin/mcp-reva`), registered as `mcp.reva` (`type: local`) in `opencode.json` |
 | Entrypoint | `scripts/entrypoint.sh` gates `ps` + `/usr/bin/prlimit`, then `exec opencode` in `/workspace` |
 | Compose | `docker-compose.yml`: `./workspace:/workspace`, `./targets:/workspace/targets:ro`, `cap_add SYS_PTRACE`, host provider key |
 
@@ -89,6 +91,41 @@ output. Evidence in `docs/NOTES.md`.
 debug sessions, and takes the model provider key from the host environment
 (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` pass through only when set on the
 host — never baked into the image).
+
+## Complementary triage (M7 — ReVa + DIE, opt-in)
+
+Both ship **enabled by default**; a lean image skips either behind a build arg:
+
+```sh
+# Full triage image (default)
+docker build -t re-box:m7 .
+
+# Lean image (no ReVa, no DIE)
+docker build -t re-box:m7-lean \
+  --build-arg REBOX_WITH_REVA=0 \
+  --build-arg REBOX_WITH_DIE=0 .
+```
+
+- **DIE** (`diec --version`): Detect-It-Easy 3.21 console triage, installed
+  from the upstream Ubuntu 24.04 `.deb` (MIT licensed). `diec` is on `PATH`
+  (`/usr/local/bin/diec`, also `DIEC_COMMAND` in `config/env.defaults`).
+- **ReVa** (`mcp-reva --help`): the `reverse-engineering-assistant` Python CLI
+  plus the Ghidra extension, both from **one pinned upstream commit**
+  (`a05a6b0`, post-v7.3.1) — built from source with the exact Gradle version
+  the baked Ghidra 12.1.4 requires and installed into
+  `$GHIDRA_INSTALL_DIR/Ghidra/Extensions` (Apache-2.0 licensed). The v7.3.1
+  tag is deliberately not used: its CLI imports a symbol the declared
+  `mcp>=2.3` floor no longer exports (proven by a failed M7 build), while the
+  pinned commit carries the SDK-v2 migration and Ghidra 12.1.4 support. `setup-rea.sh` registers it as `mcp.reva` (`type: local`,
+  `command: ["mcp-reva"]`) in `opencode.json` whenever `mcp-reva` is on
+  `PATH` (skipped silently in lean images).
+- **Headless note**: a full ReVa headless boot (Ghidra init + MCP
+  `tools/list` round-trip) is heavy (~1–2 min, GBs of RAM), so the build
+  gate proves *load* (extension installed with matching version stamp,
+  `mcp-reva --help`, `import reva_cli`, `mcp.reva` registered) rather than
+  blocking the build on a live server round-trip. Runtime proof is recorded
+  in `docs/NOTES.md`. Start it at runtime with `mcp-reva` (stdio MCP) from
+  any workspace directory.
 
 ## What setup-rea.sh does (M6 wire-up)
 
@@ -154,7 +191,8 @@ docs/IMPLEMENTATION_PROMPT.md  # copy of the opencode-rea spec for contributors
 docs/NOTES.md         # build evidence + discovery log
 docs/reports/         # per-milestone implementation reports
 scripts/              # install-ghidra.sh, install-jadx.sh, healthcheck.mjs,
-                      # setup-rea.sh (M6), entrypoint.sh (M6), smoke.sh (M8)
+                      # install-die.sh, install-reva.sh (M7), setup-rea.sh (M6/M7),
+                      # entrypoint.sh (M6), smoke.sh (M8)
 config/env.defaults   # single source of truth for every REA_* engine path
 .github/workflows/build.yml  # build image (smoke lands in M8)
 ```

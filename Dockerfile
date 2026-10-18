@@ -1,4 +1,18 @@
-# re-box — reproducible reverse-engineering container (M6 wire-up)
+# re-box — reproducible reverse-engineering container (M7 complementary triage)
+#
+# Multi-stage build:
+#   Stage 1 (system): Ubuntu 24.04 + APT toolchain (JDK 21 full, procps ps,
+#                     util-linux prlimit, git, curl/unzip, python3+pip+venv,
+#                     NodeSource keyring prerequisites).
+#   Stage 2 (final):  Node 22 (NodeSource), Bun, OpenCode CLI 2.0.32
+#                     (pinned, locked), all M5 analysis engines, M7 triage
+#                     (DIE 3.21 diec + ReVa 7.3.1 mcp-reva, both opt-in behind
+#                     REBOX_WITH_DIE / REBOX_WITH_REVA), non-root `re`
+#                     user, /workspace, M6/M7 REA wire-up (setup-rea.sh as `re`:
+#                     rea setup + opencode-rea plugin + skill bundle +
+#                     operator-memory + compact profile + watcher.ignore +
+#                     conditional mcp.reva), entrypoint gates ps/prlimit then
+#                     execs opencode.
 #
 # Multi-stage build:
 #   Stage 1 (system): Ubuntu 24.04 + APT toolchain (JDK 21 full, procps ps,
@@ -231,6 +245,10 @@ ENV REA_JAVASCRIPT_PRLIMIT_COMMAND=/usr/bin/prlimit
 ENV REA_FIRMWARE_PRLIMIT_COMMAND=/usr/bin/prlimit
 ENV REA_EVM_PRLIMIT_COMMAND=/usr/bin/prlimit
 ENV REA_MCP_INPUT_SCHEMA_PROFILE=compact
+# M7 complementary triage (mirrors config/env.defaults; optional behind the
+# REBOX_WITH_* build args — healthcheck warns instead of failing when absent).
+ENV REVA_COMMAND=/usr/local/bin/mcp-reva
+ENV DIEC_COMMAND=/usr/local/bin/diec
 
 # ---- M5 tiny sample target (Ghidra headless acceptance decompile) ----------
 RUN set -eux; \
@@ -238,6 +256,29 @@ RUN set -eux; \
   printf '#include <stdio.h>\nint main(void){printf("re-box m5\\n");return 0;}\n' > /opt/re-box/samples/hello.c; \
   gcc -O0 -g -o /opt/re-box/samples/hello /opt/re-box/samples/hello.c; \
   /opt/re-box/samples/hello | grep -q 're-box m5'
+
+# ---- M7 complementary triage: DIE 3.21 + ReVa 7.3.1 (opt-in) -----------------
+# Both default ON for the full triage image; a lean image skips either with
+#   docker build --build-arg REBOX_WITH_REVA=0 --build-arg REBOX_WITH_DIE=0 .
+# Skipped layers leave no binaries behind, setup-rea.sh detects the absence
+# (mcp-reva/diec not on PATH) and omits the registration, and healthcheck.mjs
+# treats REVA_COMMAND/DIEC_COMMAND as optional.
+ARG REBOX_WITH_DIE=1
+ARG REBOX_WITH_REVA=1
+COPY scripts/install-die.sh scripts/install-reva.sh /tmp/re-box/
+RUN if [ "${REBOX_WITH_DIE:-1}" = "1" ]; then \
+      bash /tmp/re-box/install-die.sh \
+      && diec --version \
+      && test -x /usr/local/bin/diec; \
+    else echo "M7: DIE skipped (REBOX_WITH_DIE=0 lean image)"; fi
+RUN if [ "${REBOX_WITH_REVA:-1}" = "1" ]; then \
+      bash /tmp/re-box/install-reva.sh \
+      && test -f "$GHIDRA_INSTALL_DIR/Ghidra/Extensions/reverse-engineering-assistant/extension.properties" \
+      && test -f "$GHIDRA_INSTALL_DIR/Ghidra/Extensions/reverse-engineering-assistant/lib/reverse-engineering-assistant.jar" \
+      && test -x /usr/local/bin/mcp-reva \
+      && mcp-reva --help >/dev/null \
+      && /opt/venvs/re-tools/bin/python -c 'import reva_cli; print("M7: reva_cli import ok")'; \
+    else echo "M7: ReVa skipped (REBOX_WITH_REVA=0 lean image)"; fi
 
 # Non-root operator + mount point.
 RUN useradd -m -s /bin/bash re \
@@ -334,10 +375,14 @@ RUN set -eux; \
   wc -c /tmp/ghidra-hello.json; \
   node -e 'const fs=require("fs");const raw=fs.readFileSync("/tmp/ghidra-hello.json","utf8");if(!/main/.test(raw)){console.error("decompile: no main symbol in report");process.exit(1);}for(const marker of ["missing_analysis_engine","provider_missing","engine-missing","not_configured"]){if(raw.includes(marker)){console.error(`decompile: engine-missing marker ${marker}`);process.exit(1);}}console.log("ghidra decompile gate passed");'
 
-# ---- M6 wire-up acceptance (runs INSIDE the image, as `re`) ----------------
+# ---- M6/M7 wire-up acceptance (runs INSIDE the image, as `re`) ------------
 # setup-rea.sh already ran above; re-assert its contract here so the build
 # fails closed: opencode.json has mcp.rea (compact env) + plugin entry +
 # watcher.ignore, the skills are on disk, and the entrypoint gates pass.
+# M7 additions are conditional on the REBOX_WITH_* build args: when enabled,
+# opencode.json must carry the mcp.reva (type local) block and diec must
+# answer --version; when a lean skip is in effect the absence is expected and
+# the healthcheck proves the optional contract instead.
 RUN set -eux; \
   node -e 'const fs=require("fs"),os=require("os"),path=require("path");const p=path.join(os.homedir(),".config/opencode/opencode.json");const c=JSON.parse(fs.readFileSync(p,"utf8"));if(!c.mcp||!c.mcp.rea)throw new Error("mcp.rea block missing");if(c.mcp.rea.environment?.REA_MCP_INPUT_SCHEMA_PROFILE!=="compact")throw new Error("compact profile missing on mcp.rea");if(!(c.plugins??[]).some(s=>String(s).includes("opencode-rea")))throw new Error("opencode-rea plugin entry missing");if(!(c.plugins??[]).some(s=>String(s).includes("operator-opencode-v2")))throw new Error("operator-opencode-v2 plugin entry missing");for(const g of ["targets/**","captures/**","ghidra_projects/**",".rea/**","*.gpr","*.rep/**","*.idb","*.i64","*.pcap*","*.core","*.dmp"]){if(!(c.watcher?.ignore??[]).includes(g))throw new Error("watcher.ignore missing "+g);}console.log("M6 opencode.json gate passed");'; \
   test -f "$HOME/.agents/skills/reverse-engineer-anything/SKILL.md"; \
@@ -346,6 +391,19 @@ RUN set -eux; \
   /usr/bin/prlimit --version; \
   /opt/re-box/scripts/entrypoint.sh --help | grep -q 'OpenCode command line interface'; \
   echo "M6 wire-up acceptance checks passed"
+RUN set -eux; \
+  if [ "${REBOX_WITH_DIE:-1}" = "1" ]; then \
+    diec --version; \
+    test -x /usr/local/bin/diec; \
+    test -x "$DIEC_COMMAND"; \
+    echo "M7 DIE gate passed"; \
+  else echo "M7 DIE skipped (REBOX_WITH_DIE=0 lean image)"; fi; \
+  if [ "${REBOX_WITH_REVA:-1}" = "1" ]; then \
+    test -f "$GHIDRA_INSTALL_DIR/Ghidra/Extensions/reverse-engineering-assistant/lib/reverse-engineering-assistant.jar"; \
+    mcp-reva --help >/dev/null; \
+    node -e 'const fs=require("fs"),os=require("os"),path=require("path");const p=path.join(os.homedir(),".config/opencode/opencode.json");const c=JSON.parse(fs.readFileSync(p,"utf8"));if(!c.mcp?.reva)throw new Error("mcp.reva block missing");if(c.mcp.reva.type!=="local")throw new Error("mcp.reva is not type local");if(!(c.mcp.reva.command??[]).includes("mcp-reva"))throw new Error("mcp.reva command missing mcp-reva");console.log("M7 opencode.json mcp.reva gate passed");'; \
+    echo "M7 ReVa load gate passed"; \
+  else echo "M7 ReVa skipped (REBOX_WITH_REVA=0 lean image)"; fi
 
 ENTRYPOINT ["/opt/re-box/scripts/entrypoint.sh"]
 CMD []

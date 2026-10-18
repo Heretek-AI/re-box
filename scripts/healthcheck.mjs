@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// re-box M5: fail-closed engine-path healthcheck.
+// re-box M5/M7: fail-closed engine-path healthcheck.
 //
 // Loops over every path variable in config/env.defaults (in the image:
-// /etc/profile.d/re-box-env.sh) and fails (exit 1) if any is missing.
+// /etc/profile.d/re-box-env.sh) and fails (exit 1) if any is missing —
+// except M7 optional triage paths (OPTIONAL_PATH_VARS), which warn-and-skip
+// so ARG=0 lean images stay green.
 // Run as the last Dockerfile build step and as the Docker HEALTHCHECK, so the
 // build fails on any absent engine and an unhealthy container is reported.
 //
@@ -18,6 +20,11 @@ const NON_PATH_VARS = new Map([
   // name -> expected value (exact match required)
   ["REA_MCP_INPUT_SCHEMA_PROFILE", "compact"],
 ]);
+
+// Optional command paths (M7 complementary triage). A lean image built with
+// REBOX_WITH_REVA=0 / REBOX_WITH_DIE=0 legitimately lacks these, so a missing
+// entry warns instead of failing. When present, the target must exist.
+const OPTIONAL_PATH_VARS = new Set(["REVA_COMMAND", "DIEC_COMMAND"]);
 
 const EXTRA_CHECKS = [
   // [label, path] — must exist AND be executable
@@ -86,6 +93,10 @@ async function main() {
       continue;
     }
     if (!existsSync(value)) {
+      if (OPTIONAL_PATH_VARS.has(name)) {
+        console.log(`healthcheck: skip ${name}=${value} (optional, not installed)`);
+        continue;
+      }
       console.error(`healthcheck: FAIL ${name}=${value} (missing)`);
       failures += 1;
       continue;

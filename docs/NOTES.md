@@ -379,3 +379,95 @@ plugin bundle `@heretek-ai/opencode-rea@0.1.2`; helper
 `@aerovato/operator-helper@1.8.0`; REA `6.5.0`; opencode `v2.0.32`.
 
 No blockers. 3x-fail budget untouched (0 failures).
+
+## M7 — complementary triage (ReVa + DIE, opt-in)
+
+Date: 2026-10-18 (UTC). Branch state: `9eecb22` clean + M7 work in progress.
+Spec: `docs/IMPLEMENTATION_PROMPT.md` §6 M7 + §7 + §8.
+
+Before-state (per task brief): `git status --short` clean at `9eecb22`
+(`?? docs/evidence/` only). No reset performed.
+
+### What was built
+
+`scripts/install-die.sh` (DIE 3.21 `die_3.21_Ubuntu_24.04_amd64.deb` via APT,
+`diec` on PATH + `/usr/local/bin/diec` canonical symlink), rewritten
+`scripts/install-reva.sh` (ONE pinned upstream commit for both halves: pip
+install of the Python CLI + `gradle install` of the Ghidra extension against
+the baked Ghidra, exact Gradle from `application.gradle.min`, ref-checked,
+sources/Gradle removed afterwards), `config/env.defaults` + Dockerfile `ENV`
+(`REVA_COMMAND`, `DIEC_COMMAND`), `scripts/healthcheck.mjs`
+(`OPTIONAL_PATH_VARS` warn-and-skip so ARG=0 lean images stay green),
+`scripts/setup-rea.sh` (conditional `mcp.reva` `{type local, command
+[mcp-reva]}` registration only when `mcp-reva` is on PATH + matching verify),
+Dockerfile M7 `ARG REBOX_WITH_DIE=1` / `ARG REBOX_WITH_REVA=1` install layers
+(after the M5 sample, before `useradd`, so M6 wire-up registers ReVa) plus a
+conditional M7 acceptance `RUN` (diec version + mcp.reva block gate), README
+M7 section (opt-in docs + lean `--build-arg` recipe + headless note).
+
+### Upstream pins + pre-build verification (host, 2026-10-18)
+
+| Artifact | URL check | Pin / proof |
+| --- | --- | --- |
+| DIE 3.21 deb | 200 (`.../download/3.21/die_3.21_Ubuntu_24.04_amd64.deb`) | `diec --version` → `die 3.21` in-build (attempt 1, final 21/37 green); `.deb` package `detectiteasy 3.21 [11.8 MB]`; MIT licensed |
+| ReVa source | `git rev-parse HEAD` = `a05a6b0a18649efd6d74ec8447bdadf8d468c365` (2026-10-13, `chore(deps): bump jetty-server 12.1.13→12.1.14 #374`), full clone ~4 MB pack | Both halves from this ONE commit; `pip show` → `7.3.2.dev11+ga05a6b0a1`; Apache-2.0 |
+| Gradle | `services.gradle.org/distributions/gradle-8.5-bin.zip` + `.sha256`, hash-compared in-script (format-agnostic) | 8.5 = baked Ghidra 12.1.4 `application.gradle.min` (raw `Ghidra_12.1.4_build` `application.properties`: `gradle.min=8.5`, `gradle.max=` empty, `java.min=21`) |
+| `mcp` SDK | resolved `mcp-2.3.0` + `pyghidra-3.1.0` + `httpx2-2.13.1` from PyPI | logged in build output |
+
+Deliberate non-choices (recorded): v7.3.1 tag REJECTED (its CLI imports
+`streamablehttp_client`, removed from the declared `mcp>=2.3` floor —
+attempt-1 ImportError proof; the pinned commit carries the SDK-v2 migration);
+closest prebuilt extension zip (Ghidra 12.1.3) REJECTED (targets 12.1.3, ours
+is 12.1.4 — build from source instead); DIE built-from-source REJECTED (Qt
+source build heavy; the upstream Ubuntu-24.04 `.deb` matches the base
+exactly); ReVa full headless `tools/list` round-trip NOT a build gate
+(~1–2 min Ghidra boot; build proves *load*, runtime probe was planned
+post-build but never reached — see blocker).
+
+### Build attempts (3x budget EXHAUSTED — STOP, blocker below)
+
+- Attempt 1 (`docker build -t re-box:m7 .`, `/tmp/opencode/m7-build-attempt1.log`)
+  → exit 1 at final 22/37. DIE layer green (`die 3.21`, `diec at
+  /usr/bin/diec`). ReVa failed: v7.3.1 wheel's `stdio_bridge.py` imports
+  `streamablehttp_client`, absent from `mcp-2.3.0`
+  (`.../streamable_http.py ... Did you mean: 'streamable_http_client'?`) →
+  `mcp-reva --help failed`. Root cause: upstream fixed this post-release
+  (SDK-v2 migration `1f13d96` + 12.1.4 CI `523d71a`). Fix: pin commit
+  `a05a6b0` for both halves.
+- Attempt 2 (`/tmp/opencode/m7-build-attempt2.log`) → exit 1 at final 22/37.
+  Pip install from pinned commit green (`7.3.2.dev11+ga05a6b0a1`,
+  `reva_cli import ok`, `mcp-reva --help` PASSED — script progressed past
+  it). Failed at `application.gradle.version not found`: Ghidra 12.1.4
+  stamps a Gradle *range* (`application.gradle.min=8.5`), not a single
+  version. Fix: read `application.gradle.min`.
+- Attempt 3 (`/tmp/opencode/m7-build-attempt3.log`) → exit 1 at final 22/37.
+  Gradle 8.5 + `gradle install` green (`BUILD SUCCESSFUL in 44s`, `Installed
+  ReVa` — the extension COMPILES against baked Ghidra 12.1.4). Failed only
+  on the verification path: the `install` task names the archive after the
+  project directory, and we cloned into `/tmp/reva-src`, so it unzipped to
+  `Ghidra/Extensions/reva-src/` (log: `inflating: reva-src/...`) while the
+  gate expected `.../reverse-engineering-assistant/`. Fix (APPLIED,
+  UNVERIFIED — no build budget left): clone into
+  `/tmp/reverse-engineering-assistant` via `$SRC_DIR` (matches upstream
+  release-zip layout); comment in `install-reva.sh` records the evidence.
+
+### Blocker (M7 NOT shippable as green)
+
+Per the 3x-fail rule, no 4th build was attempted. To finish M7, one
+confirmation build is needed: `docker build -t re-box:m7 .` (expected green —
+the only change since attempt 3 is the canonical clone-dir name), then the
+post-build runtime probes that were never reached: `diec --version`,
+`mcp-reva --help`, extension dir listing, `opencode.json` `mcp.reva` block,
+and the best-effort headless start (`mcp-reva` stdio `initialize` +
+`tools/list` with a 300 s timeout; if heavy, the opt-in + load-proof position
+already documented in README stands). Healthcheck optional-path logic was
+unit-probed on the host (missing optional → `skip`, exit path unaffected;
+present → `ok`). Lean `ARG=0` paths are code-reviewed only, never built.
+
+### Files changed (explicit add set for the M7 commit)
+
+`Dockerfile`, `scripts/install-die.sh` (new), `scripts/install-reva.sh`
+(new), `scripts/setup-rea.sh`, `scripts/healthcheck.mjs`,
+`config/env.defaults`, `README.md`, `docs/NOTES.md` (this entry).
+`review/` was read-only reference only (never staged). No secrets touched.
+No push (per brief).

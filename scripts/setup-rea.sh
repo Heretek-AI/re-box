@@ -1,5 +1,5 @@
 #!/bin/sh
-# re-box M6: wire REA + plugin + skills + memory into the container.
+# re-box M6/M7: wire REA + plugin + skills + memory (+ ReVa) into the container.
 #
 # Runs as the `re` user, at build time (Dockerfile `RUN`, HOME=/home/re).
 # Idempotent: every step can be re-run (rea setup merges, plugin add is
@@ -21,6 +21,8 @@
 #   5. Merges `"environment": {"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"}`
 #      into `mcp.rea` (jq; keeps everything rea setup wrote) and adds the
 #      `watcher.ignore` list for targets/captures/decompiler artefacts.
+#   6. (M7) If `mcp-reva` is on PATH (full image; lean ARG=0 skips lack it),
+#      registers the ReVa headless MCP server as `mcp.reva` (`type: local`).
 set -eu
 
 log() { printf 'setup-rea: %s\n' "$*"; }
@@ -93,8 +95,33 @@ jq '
 mv "$tmp" "$CONFIG"
 log "merged compact profile + watcher.ignore into $CONFIG"
 
-# 6. Verify (fail closed).
-CONFIG="$CONFIG" node -e '
+# 6. (M7) ReVa headless MCP server — only when the full image installed it.
+# Lean images (REBOX_WITH_REVA=0) lack mcp-reva and skip this block.
+if command -v mcp-reva >/dev/null 2>&1; then
+  log 'registering mcp.reva (type local, headless mcp-reva)'
+  GHIDRA_DIR="${GHIDRA_INSTALL_DIR:-/opt/ghidra_12.1.4_PUBLIC}"
+  tmp_reva="$(mktemp)"
+  GHIDRA_DIR="$GHIDRA_DIR" jq --arg ghidra "$GHIDRA_DIR" '
+    .mcp.reva = (
+      (.mcp.reva // {}) + {
+        "type": "local",
+        "command": ["mcp-reva"],
+        "environment": {
+          "GHIDRA_INSTALL_DIR": $ghidra,
+          "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk-amd64"
+        }
+      }
+    )
+  ' "$CONFIG" > "$tmp_reva"
+  mv "$tmp_reva" "$CONFIG"
+  log "registered mcp.reva in $CONFIG"
+else
+  log 'mcp-reva not found — skipping mcp.reva registration (lean image)'
+fi
+
+# 7. Verify (fail closed).
+if command -v mcp-reva >/dev/null 2>&1; then REVA_EXPECTED=1; else REVA_EXPECTED=0; fi
+CONFIG="$CONFIG" REVA_EXPECTED="$REVA_EXPECTED" node -e '
 const fs = require("fs");
 const c = JSON.parse(fs.readFileSync(process.env.CONFIG, "utf8"));
 if (!c.mcp || !c.mcp.rea) throw new Error("mcp.rea block missing");
@@ -105,6 +132,15 @@ if (!(c.plugins ?? []).some((p) => String(p).includes("opencode-rea")))
 const want = ["targets/**","captures/**","ghidra_projects/**",".rea/**","*.gpr","*.rep/**","*.idb","*.i64","*.pcap*","*.core","*.dmp"];
 for (const g of want)
   if (!(c.watcher?.ignore ?? []).includes(g)) throw new Error("watcher.ignore missing " + g);
+if (process.env.REVA_EXPECTED === "1") {
+  if (!c.mcp?.reva || c.mcp.reva.type !== "local")
+    throw new Error("mcp.reva block missing (mcp-reva installed but not registered)");
+  if (!(c.mcp.reva.command ?? []).includes("mcp-reva"))
+    throw new Error("mcp.reva command missing mcp-reva");
+  console.log("setup-rea: mcp.reva gate passed");
+} else {
+  console.log("setup-rea: mcp.reva skipped (lean image, mcp-reva absent)");
+}
 console.log("setup-rea: config gate passed");
 '
 test -f "$HOME/.agents/skills/reverse-engineer-anything/SKILL.md" \
