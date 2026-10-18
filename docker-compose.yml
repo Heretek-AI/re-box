@@ -12,8 +12,9 @@
 # Secrets policy (Gotcha 12): never bake API keys/tokens into the image or
 # commit them. Pass the model provider key from the host environment at
 # `docker compose run` time, e.g.:
-#   ANTHROPIC_API_KEY=... docker compose run --rm re-box
-# (prefer your provider's own env name; the image reads nothing at build time).
+#   OPENCODE_GO_API_KEY=... docker compose run --rm re-box
+# (prefer your provider's own env name, e.g. ANTHROPIC_API_KEY=... for
+# direct provider use; the image reads nothing at build time).
 name: re-box
 
 services:
@@ -34,3 +35,5 @@ services:
       # means unset in the container. Add your provider's own name as needed.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENCODE_API_KEY=${OPENCODE_API_KEY:-}
+      - OPENCODE_GO_API_KEY=${OPENCODE_GO_API_KEY:-}

@@ -643,3 +643,58 @@ added (re-box side N/A). `review/` untouched.
 
 `README.md`, `scripts/healthcheck.mjs`, `scripts/setup-rea.sh`,
 `scripts/smoke.sh`, `Dockerfile`, `docs/NOTES.md` (this entry). No push.
+
+## Compose keys fix — OPENCODE_* passthrough (2026-10-18 UTC)
+
+Branch: `claude/rebox-compose-keys` (from `origin/main @ 2f6ca39`).
+
+### What was missing
+
+`docker-compose.yml` passed through only `ANTHROPIC_API_KEY` /
+`OPENAI_API_KEY` (`${VAR:-}`, unset-means-unset). The sister repo
+(Heretek-Crew `docker-compose.yml`, `paperclip` service) passes
+`OPENCODE_API_KEY` + `OPENCODE_GO_API_KEY` the same way, and this repo's own
+README secrets section already showed a `docker run -e
+OPENCODE_API_KEY=...` passthrough — but compose dropped both `OPENCODE_*`
+keys, so `docker compose run` never forwarded the Go/Zen key.
+
+### In-repo evidence check (scope decision)
+
+- `Dockerfile`: OpenCode CLI pinned `@opencode/cli@2.0.32`; no provider-key
+  reads at build time (never-bake policy, Gotcha 12).
+- `scripts/entrypoint.sh`: gates `ps` + `/usr/bin/prlimit` + `/workspace`,
+  then `exec opencode "$@"` — no provider env consumed.
+- `README.md` provider notes: only generic "prefer your provider's own env
+  name" guidance; no per-provider requirement beyond the host key.
+- Conclusion: keep minimal — add only `OPENCODE_API_KEY` +
+  `OPENCODE_GO_API_KEY` with `:-` empty defaults (unset-means-unset,
+  matching the existing lines). No other providers (no in-repo evidence
+  opencode 2.0.32 in this image needs them).
+
+### What was built
+
+- `docker-compose.yml`: environment gains
+  `OPENCODE_API_KEY=${OPENCODE_API_KEY:-}` and
+  `OPENCODE_GO_API_KEY=${OPENCODE_GO_API_KEY:-}` (existing
+  ANTHROPIC/OPENAI lines untouched); header comment example now
+  `OPENCODE_GO_API_KEY=... docker compose run --rm re-box` (never-bake
+  policy preserved).
+- `README.md`: compose key paragraph lists all four passthrough vars;
+  secrets section shows the `OPENCODE_GO_API_KEY=... docker compose run`
+  example plus the `docker run -e OPENCODE_GO_API_KEY=...` form.
+- `docs/NOTES.md`: this entry.
+
+### Validation
+
+- `docker compose config` (keys unset) → exit 0; all four env values `""`
+  (empty = unset in container).
+- `OPENCODE_API_KEY=test123 OPENCODE_GO_API_KEY=test456 docker compose
+  config` → exit 0; `OPENCODE_API_KEY: test123`,
+  `OPENCODE_GO_API_KEY: test456`, ANTHROPIC/OPENAI still `""`.
+- `grep -RniE 'ghp_|sk-|BEGIN PRIVATE|PASSWORD' Dockerfile
+  docker-compose.yml scripts/` → no matches (no baked secrets).
+- `docker compose config` exits 0 in both cases.
+
+### Files changed (explicit add set for this commit)
+
+`docker-compose.yml`, `README.md`, `docs/NOTES.md` (this entry). No push.
